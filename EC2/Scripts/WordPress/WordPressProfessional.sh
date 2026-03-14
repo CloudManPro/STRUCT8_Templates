@@ -174,50 +174,61 @@ setup_and_configure_proxysql() {
     local db_user="$3"
     local db_pass="$4"
     
-    echo "INFO (ProxySQL): Iniciando configuração robusta..."
+    echo "INFO (ProxySQL): Preparando ambiente para o AL2023..."
 
-    # 1. Aguardar o ProxySQL estar pronto para receber conexões (até 60 seg)
+    # 1. Criar usuário e grupo manualmente (O RPM falha nisso no AL2023)
+    sudo groupadd -r proxysql 2>/dev/null || true
+    sudo useradd -r -g proxysql -d /var/lib/proxysql -s /sbin/nologin proxysql 2>/dev/null || true
+
+    # 2. Garantir que as pastas existam e tenham permissão
+    sudo mkdir -p /var/lib/proxysql /var/run/proxysql
+    sudo chown -R proxysql:proxysql /var/lib/proxysql /var/run/proxysql /etc/proxysql.cnf
+
+    # 3. Forçar o ProxySQL a iniciar do zero (limpando bancos antigos)
+    echo "INFO (ProxySQL): Iniciando serviço..."
+    sudo systemctl stop proxysql 2>/dev/null || true
+    
+    # Rodar uma vez manualmente com --initial para garantir que o DB inicial seja criado com as permissões certas
+    sudo /usr/bin/proxysql --initial -c /etc/proxysql.cnf
+    
+    # Agora deixar o Systemd assumir o controle
+    sudo systemctl enable proxysql
+    sudo systemctl restart proxysql
+
+    # 4. Aguardar o admin port (6032) abrir
     local count=0
     while ! mysql -u admin -padmin -h 127.0.0.1 -P 6032 -e "SELECT 1" >/dev/null 2>&1; do
-        if [ $count -gt 20 ]; then
-            echo "ERRO CRÍTICO: ProxySQL não respondeu na porta 6032 após 60 segundos."
+        if [ $count -gt 15 ]; then
+            echo "ERRO: ProxySQL não respondeu. Verificando logs..."
+            sudo journalctl -u proxysql --no-pager | tail -n 20
             exit 1
         fi
-        echo "Aguardando ProxySQL subir... ($((count*3))s)"
+        echo "Aguardando ProxySQL Admin... ($((count*3))s)"
         sleep 3
         ((count++))
     done
 
-    # 2. Preparar a senha para o SQL (Escapar aspas simples se existirem)
-    # Mesmo que sua senha atual não tenha ', a próxima pode ter.
+    # 5. Configuração via SQL (Usando escape para a senha do RDS)
     local SAFE_DB_PASS=$(echo "$db_pass" | sed "s/'/\\\\'/g")
 
-    # 3. Executar comandos via Heredoc (Mais seguro que "mysql -e")
-    # Usar 'EOF' entre aspas impede que o shell tente expandir variáveis dentro do bloco SQL de forma errada
+    echo "INFO (ProxySQL): Aplicando regras de roteamento..."
     mysql -u admin -padmin -h 127.0.0.1 -P 6032 <<EOF
 DELETE FROM mysql_servers WHERE hostgroup_id = 10;
 DELETE FROM mysql_users WHERE username = '${db_user}';
-DELETE FROM mysql_query_rules WHERE rule_id = 1;
-
 INSERT INTO mysql_servers (hostgroup_id, hostname, port) VALUES (10, '${rds_host}', ${rds_port});
 INSERT INTO mysql_users (username, password, default_hostgroup) VALUES ('${db_user}', '${SAFE_DB_PASS}', 10);
 INSERT INTO mysql_query_rules (rule_id, active, username, destination_hostgroup, apply) VALUES (1, 1, '${db_user}', 10, 1);
-
 UPDATE global_variables SET variable_value='${db_user}' WHERE variable_name='mysql-monitor_username';
 UPDATE global_variables SET variable_value='${SAFE_DB_PASS}' WHERE variable_name='mysql-monitor_password';
-
 LOAD MYSQL VARIABLES TO RUNTIME;
 LOAD MYSQL SERVERS TO RUNTIME;
 LOAD MYSQL USERS TO RUNTIME;
 LOAD MYSQL QUERY RULES TO RUNTIME;
-
 SAVE MYSQL VARIABLES TO DISK;
 SAVE MYSQL SERVERS TO DISK;
 SAVE MYSQL USERS TO DISK;
 SAVE MYSQL QUERY RULES TO DISK;
 EOF
-
-    echo "INFO (ProxySQL): Configuração finalizada com sucesso."
 }
 
 
