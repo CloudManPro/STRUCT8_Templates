@@ -373,7 +373,7 @@ sudo yum update -y -q
 echo "INFO: Instalando dependências básicas (AL2023)..."
 # No AL2023, o PHP 8.2 já está no repositório padrão. Não precisa de extras.
 # O pacote mysql agora é 'mariadb105' ou usamos o client padrão.
-sudo dnf install -y amazon-efs-utils jq mariadb105-ansible-gallery-mysql-client-bin
+sudo dnf install -y amazon-efs-utils jq mariadb105
 
 
 echo "INFO: Instalando X-Ray Daemon manualmente via RPM para máxima compatibilidade..."
