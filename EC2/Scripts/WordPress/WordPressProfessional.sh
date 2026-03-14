@@ -370,9 +370,11 @@ echo "INFO: Verificação de variáveis concluída."
 echo "INFO: Iniciando instalação de pacotes..."
 sudo yum update -y -q
 
-echo "INFO: Instalando dependências básicas e habilitando PHP 8.2..."
-sudo yum install -y amazon-efs-utils jq mysql
-sudo amazon-linux-extras enable php8.2 -y
+echo "INFO: Instalando dependências básicas (AL2023)..."
+# No AL2023, o PHP 8.2 já está no repositório padrão. Não precisa de extras.
+# O pacote mysql agora é 'mariadb105' ou usamos o client padrão.
+sudo dnf install -y amazon-efs-utils jq mariadb105-ansible-gallery-mysql-client-bin
+
 
 echo "INFO: Instalando X-Ray Daemon manualmente via RPM para máxima compatibilidade..."
 if ! rpm -q xray > /dev/null; then
@@ -384,15 +386,15 @@ fi
 echo "INFO: Configurando repositório YUM para o ProxySQL v2.6..."
 sudo tee /etc/yum.repos.d/proxysql.repo > /dev/null <<'EOF'
 [proxysql]
-name=ProxySQL YUM repository for v2.6
-baseurl=https://repo.proxysql.com/ProxySQL/proxysql-2.6.x/centos/7/
+name=ProxySQL YUM repository
+baseurl=https://repo.proxysql.com/ProxySQL/proxysql-2.6.x/centos/8/
 gpgcheck=1
 gpgkey=https://repo.proxysql.com/ProxySQL/proxysql-2.6.x/repo_pub_key
 EOF
 sudo yum clean all
 
-echo "INFO: Instalando pacotes restantes (PHP, ProxySQL)..."
-sudo yum install -y httpd php php-common php-fpm php-mysqlnd php-json php-cli php-xml php-zip php-gd php-mbstring php-soap php-opcache proxysql
+echo "INFO: Instalando pacotes do PHP 8.2 e ProxySQL..."
+sudo dnf install -y httpd php8.2 php8.2-common php8.2-fpm php8.2-mysqlnd php8.2-mbstring php8.2-gd php8.2-xml php8.2-opcache proxysql
 if [ $? -ne 0 ]; then echo "ERRO CRÍTICO: Falha durante o 'yum install' dos pacotes restantes."; exit 1; fi
 
 echo "INFO: Verificando instalação do X-Ray Daemon..."
