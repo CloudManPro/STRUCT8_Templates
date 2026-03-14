@@ -15,7 +15,7 @@ readonly ENV_VARS_FILE="/etc/wordpress_setup_v3.2.0_env_vars.sh"
 # --- Variáveis Globais ---
 LOG_FILE="/var/log/wordpress_setup_v3.2.0.log"
 MOUNT_POINT="/var/www/html"
-WP_DOWNLOAD_DIR="/tmp/wp_download_temp"
+WP_DOWNLOAD_DIR="/tmp/wp_download_temp
 WP_FINAL_CONTENT_DIR="/tmp/wp_final_efs_content"
 ACTIVE_CONFIG_FILE_EFS="$MOUNT_POINT/wp-config.php"
 CONFIG_SAMPLE_ON_EFS="$MOUNT_POINT/wp-config-sample.php"
@@ -180,36 +180,26 @@ setup_and_configure_proxysql() {
     sudo groupadd -r proxysql 2>/dev/null || true
     sudo useradd -r -g proxysql -d /var/lib/proxysql -s /sbin/nologin proxysql 2>/dev/null || true
 
-    # 2. Garantir que as pastas existam e tenham permissão
+    # 2. Garantir que as pastas existam
     sudo mkdir -p /var/lib/proxysql /var/run/proxysql
-    sudo chown -R proxysql:proxysql /var/lib/proxysql /var/run/proxysql /etc/proxysql.cnf
 
-    # 3. Forçar o ProxySQL a iniciar do zero (limpando bancos antigos)
-    echo "INFO (ProxySQL): Iniciando serviço..."
+    # 3. Forçar o ProxySQL a iniciar do zero
+    echo "INFO (ProxySQL): Inicializando banco de dados..."
     sudo systemctl stop proxysql 2>/dev/null || true
     
-    # Rodar uma vez manualmente com --initial para garantir que o DB inicial seja criado com as permissões certas
+    # Executa a inicialização (cria os DBs e SSL certs como root)
     sudo /usr/bin/proxysql --initial -c /etc/proxysql.cnf
     
-    # Agora deixar o Systemd assumir o controle
+    # Mata o processo manual que foi para o background
+    sudo pkill proxysql || true
+    sleep 2
+    
+    # 4. AGORA SIM ajustamos as permissões de tudo o que foi gerado
+    sudo chown -R proxysql:proxysql /var/lib/proxysql /var/run/proxysql /etc/proxysql.cnf
+    
+    # 5. Deixa o Systemd assumir o controle (agora o usuário proxysql é dono dos arquivos)
     sudo systemctl enable proxysql
-    sudo systemctl restart proxysql
-
-    # 4. Aguardar o admin port (6032) abrir
-    local count=0
-    while ! mysql -u admin -padmin -h 127.0.0.1 -P 6032 -e "SELECT 1" >/dev/null 2>&1; do
-        if [ $count -gt 15 ]; then
-            echo "ERRO: ProxySQL não respondeu. Verificando logs..."
-            sudo journalctl -u proxysql --no-pager | tail -n 20
-            exit 1
-        fi
-        echo "Aguardando ProxySQL Admin... ($((count*3))s)"
-        sleep 3
-        ((count++))
-    done
-
-    # 5. Configuração via SQL (Usando escape para a senha do RDS)
-    local SAFE_DB_PASS=$(echo "$db_pass" | sed "s/'/\\\\'/g")
+    sudo systemctl start proxysql
 
     echo "INFO (ProxySQL): Aplicando regras de roteamento..."
     mysql -u admin -padmin -h 127.0.0.1 -P 6032 <<EOF
