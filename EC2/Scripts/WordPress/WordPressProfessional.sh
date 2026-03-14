@@ -25,7 +25,7 @@ essential_vars=(
     "AWS_EFS_FILE_SYSTEM_ID_0"
     "AWS_EFS_ACCESS_POINT_ID_0"
     "AWS_DB_INSTANCE_ENDPOINT_DB"
-    "AWS_DB_INSTANCE_NAME_DB"
+    "AWS_DB_INSTANCE_DB_NAME"
     "AWS_DB_INSTANCE_SECRET_ARN_DB"
     "WPDOMAIN"
     "ACCOUNT"
@@ -406,7 +406,7 @@ echo "INFO: Obtendo credenciais do RDS do Secrets Manager..."
 SECRET_STRING_VALUE=$(aws secretsmanager get-secret-value --secret-id "$AWS_DB_INSTANCE_SECRET_ARN_DB" --query 'SecretString' --output text --region "$REGION")
 DB_USER=$(echo "$SECRET_STRING_VALUE" | jq -r .username)
 DB_PASSWORD=$(echo "$SECRET_STRING_VALUE" | jq -r .password)
-DB_NAME_TO_USE="$AWS_DB_INSTANCE_NAME_DB"
+DB_NAME_TO_USE="$AWS_DB_INSTANCE_DB_NAME"
 RDS_ACTUAL_HOST_ENDPOINT=$(echo "$AWS_DB_INSTANCE_ENDPOINT_DB" | cut -d: -f1)
 RDS_ACTUAL_PORT=$(echo "$AWS_DB_INSTANCE_ENDPOINT_DB" | cut -d: -f2); [ -z "$RDS_ACTUAL_PORT" ] && RDS_ACTUAL_PORT=3306
 DB_HOST_FOR_WP_CONFIG="127.0.0.1:6033"
