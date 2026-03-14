@@ -2,15 +2,15 @@
 # EC2/Scripts/WordPress/FetchAndRunS3Script.sh
 
 # --- 1. Ajuste de Permissões ---
-echo "INFO: Ajustando permissões para /home/ec2-user/.env..."
-chmod 644 /home/ec2-user/.env
+echo "INFO: Ajustando permissões para /etc/struct8_env..."
+chmod 644 /etc/struct8_env
 chmod o+x /home/ec2-user
 echo "INFO: Permissões ajustadas."
 
 # --- 2. Carregamento e Exportação das Variáveis do .env ---
-echo "INFO: Carregando e exportando variáveis de /home/ec2-user/.env..."
-set -a # Habilita a exportação automática
-source /home/ec2-user/.env
+echo "INFO: Carregando e exportando variáveis de /etc/struct8_env..."
+set -a
+source /etc/struct8_env
 set +a # Desabilita a exportação automática
 echo "INFO: Variáveis carregadas e marcadas para exportação."
 
