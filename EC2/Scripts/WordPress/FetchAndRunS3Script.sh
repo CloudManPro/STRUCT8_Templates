@@ -1,0 +1,115 @@
+#!/bin/bash
+# EC2/Scripts/FetchAndRunS3Script.sh
+
+# --- 1. Ajuste de Permissões ---
+echo "INFO: Ajustando permissões para /home/ec2-user/.env..."
+chmod 644 /home/ec2-user/.env
+chmod o+x /home/ec2-user
+echo "INFO: Permissões ajustadas."
+
+# --- 2. Carregamento e Exportação das Variáveis do .env ---
+echo "INFO: Carregando e exportando variáveis de /home/ec2-user/.env..."
+set -a # Habilita a exportação automática
+source /home/ec2-user/.env
+set +a # Desabilita a exportação automática
+echo "INFO: Variáveis carregadas e marcadas para exportação."
+
+# --- 3. Lógica de Fallback de Variáveis S3 ---
+# Removemos o "TARGET" conforme solicitado.
+S3_BUCKET_NAME="${AWS_S3_BUCKET_NAME_SCRIPT}"
+
+# Regra da Região: Se AWS_S3_BUCKET_REGION_SCRIPT estiver vazia ou não existir, usa a variável REGION.
+S3_REGION="${AWS_S3_BUCKET_REGION_SCRIPT:-$REGION}"
+
+# Chave do script a ser baixado
+S3_SCRIPT_KEY="${AWS_S3_SCRIPT_KEY}"
+
+# --- 4. Debugging (Verificar variáveis após source e fallback) ---
+DEBUG_LOG="/var/log/user-data-debug.log"
+echo "--- Debug User Data Vars (after source and fallback) ---" > "$DEBUG_LOG"
+echo "Timestamp: $(date)" >> "$DEBUG_LOG"
+echo "S3_BUCKET_NAME = ${S3_BUCKET_NAME:-NAO CARREGADA}" >> "$DEBUG_LOG"
+echo "S3_REGION (Computed) = ${S3_REGION:-NAO CARREGADA}" >> "$DEBUG_LOG"
+echo "S3_SCRIPT_KEY = ${S3_SCRIPT_KEY:-NAO CARREGADA}" >> "$DEBUG_LOG"
+echo "---------------------------" >> "$DEBUG_LOG"
+echo "INFO: Log de debug das variáveis S3 gravado em $DEBUG_LOG"
+
+# --- 5. Lógica para Baixar e Executar Script do S3 ---
+FETCH_LOG_FILE="/var/log/fetch_and_run_s3_script.log"
+TMP_DIR="/tmp"
+
+# --- Funções Auxiliares (Escopo Local) ---
+_log_fetch() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - FETCH_RUN - $1" | tee -a "$FETCH_LOG_FILE"
+}
+
+# --- Início da Execução Fetch/Run (Saída redirecionada para FETCH_LOG_FILE) ---
+{
+    _log_fetch "INFO: Iniciando lógica para buscar e executar script do S3."
+
+    # 5.1. Verifica/Instala AWS CLI
+    if ! command -v aws &>/dev/null; then
+        _log_fetch "ERRO: AWS CLI não encontrado. Tentando instalar..."
+        if command -v yum &> /dev/null; then
+             yum install -y aws-cli
+        elif command -v apt-get &> /dev/null; then
+             apt-get update && apt-get install -y awscli
+        else
+            _log_fetch "ERRO: Gerenciador de pacotes não suportado para instalar AWS CLI."
+             exit 1
+        fi
+        if ! command -v aws &> /dev/null; then
+           _log_fetch "ERRO: Falha ao instalar AWS CLI."
+           exit 1
+        fi
+    fi
+    _log_fetch "INFO: AWS CLI encontrado."
+
+    # 5.2. Verifica variáveis S3 processadas
+    if [ -z "$S3_BUCKET_NAME" ] || [ -z "$S3_REGION" ] || [ -z "$S3_SCRIPT_KEY" ]; then
+        _log_fetch "ERRO: Uma ou mais variáveis S3 necessárias (BUCKET/REGION/KEY) não estão definidas no ambiente."
+        _log_fetch "ERRO: Verifique o conteúdo de /home/ec2-user/.env, os logs de permissão/source e /var/log/user-data-debug.log."
+        _log_fetch "ERRO: Valores atuais computados: BUCKET='$S3_BUCKET_NAME', REGION='$S3_REGION', KEY='$S3_SCRIPT_KEY'"
+        exit 1 # Falha o User Data
+    fi
+    _log_fetch "INFO: Variáveis S3 computadas: BUCKET=${S3_BUCKET_NAME}, REGION=${S3_REGION}, KEY=${S3_SCRIPT_KEY}"
+
+    # 5.3. Define caminho local e trap de limpeza
+    LOCAL_SCRIPT_PATH=$(mktemp "$TMP_DIR/s3_script.XXXXXX.sh")
+    _log_fetch "INFO: Script S3 será baixado para: $LOCAL_SCRIPT_PATH"
+    trap '_log_fetch "INFO: Limpando script temporário $LOCAL_SCRIPT_PATH"; rm -f "$LOCAL_SCRIPT_PATH"' EXIT SIGHUP SIGINT SIGTERM
+
+    # 5.4. Constrói URI S3
+    S3_URI="s3://${S3_BUCKET_NAME}/${S3_SCRIPT_KEY}"
+    _log_fetch "INFO: Tentando baixar de: $S3_URI"
+
+    # 5.5. Baixa o script do S3 usando a região computada
+    if ! aws s3 cp "$S3_URI" "$LOCAL_SCRIPT_PATH" --region "$S3_REGION"; then
+        _log_fetch "ERRO: Falha ao baixar o script de '$S3_URI'."
+        _log_fetch "ERRO: Verifique as permissões do IAM Role (s3:GetObject), o nome/existência do bucket/chave S3 e a região ('$S3_REGION')."
+        exit 1
+    fi
+    _log_fetch "INFO: Script S3 baixado com sucesso."
+
+    # 5.6. Torna executável
+    chmod +x "$LOCAL_SCRIPT_PATH"
+    _log_fetch "INFO: Permissão de execução adicionada a '$LOCAL_SCRIPT_PATH'."
+
+    # 5.7. Executa o script baixado
+    _log_fetch "INFO: Executando o script baixado: $LOCAL_SCRIPT_PATH"
+    # O script baixado herda as variáveis exportadas na seção 2
+    if "$LOCAL_SCRIPT_PATH"; then
+        _log_fetch "INFO: Script baixado ($LOCAL_SCRIPT_PATH) executado com sucesso."
+    else
+        EXIT_CODE=$?
+        _log_fetch "ERRO: O script baixado ($LOCAL_SCRIPT_PATH) falhou com o código de saída: $EXIT_CODE."
+        exit $EXIT_CODE # Propaga o erro do script S3
+    fi
+
+    _log_fetch "INFO: Lógica fetch_and_run_s3_script concluída com sucesso."
+
+} > >(tee -a "$FETCH_LOG_FILE") 2>&1 # Fim do bloco redirecionado para FETCH_LOG_FILE
+
+# Se chegou aqui, tudo (incluindo o script S3) foi executado com sucesso.
+echo "--- Script User Data concluído com sucesso ---"
+exit 0
