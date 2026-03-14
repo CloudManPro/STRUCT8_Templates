@@ -15,7 +15,7 @@ readonly ENV_VARS_FILE="/etc/wordpress_setup_v3.2.0_env_vars.sh"
 # --- Variáveis Globais ---
 LOG_FILE="/var/log/wordpress_setup_v3.2.0.log"
 MOUNT_POINT="/var/www/html"
-WP_DOWNLOAD_DIR="/tmp/wp_download_temp
+WP_DOWNLOAD_DIR="/tmp/wp_download_temp"
 WP_FINAL_CONTENT_DIR="/tmp/wp_final_efs_content"
 ACTIVE_CONFIG_FILE_EFS="$MOUNT_POINT/wp-config.php"
 CONFIG_SAMPLE_ON_EFS="$MOUNT_POINT/wp-config-sample.php"
