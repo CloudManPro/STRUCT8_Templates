@@ -6,6 +6,8 @@
 # - MANTIDO: PHP 8.2 e instrumentação manual robusta do X-Ray via UDP.
 
 # --- Configurações Chave ---
+set +H
+
 readonly THIS_SCRIPT_TARGET_PATH="/usr/local/bin/wordpress_setup_v3.2.0.sh"
 readonly APACHE_USER="apache"
 readonly ENV_VARS_FILE="/etc/wordpress_setup_v3.2.0_env_vars.sh"
@@ -172,37 +174,52 @@ setup_and_configure_proxysql() {
     local db_user="$3"
     local db_pass="$4"
     
-    echo "INFO (ProxySQL): Iniciando configuração idempotente do ProxySQL..."
-    run_proxysql_admin() { mysql -u admin -padmin -h 127.0.0.1 -P 6032 -e "$1"; }
-    
-    if ! sudo systemctl start proxysql; then
-        echo "ERRO CRÍTICO (ProxySQL): Falha ao iniciar o serviço ProxySQL para configuração."
-        exit 1
-    fi
-    sleep 5
+    echo "INFO (ProxySQL): Iniciando configuração robusta..."
 
-    run_proxysql_admin "DELETE FROM mysql_servers WHERE hostgroup_id = 10;"
-    run_proxysql_admin "DELETE FROM mysql_users WHERE username = '${db_user}';"
-    run_proxysql_admin "DELETE FROM mysql_query_rules WHERE rule_id = 1;"
+    # 1. Aguardar o ProxySQL estar pronto para receber conexões (até 60 seg)
+    local count=0
+    while ! mysql -u admin -padmin -h 127.0.0.1 -P 6032 -e "SELECT 1" >/dev/null 2>&1; do
+        if [ $count -gt 20 ]; then
+            echo "ERRO CRÍTICO: ProxySQL não respondeu na porta 6032 após 60 segundos."
+            exit 1
+        fi
+        echo "Aguardando ProxySQL subir... ($((count*3))s)"
+        sleep 3
+        ((count++))
+    done
 
-    run_proxysql_admin "INSERT INTO mysql_servers (hostgroup_id, hostname, port) VALUES (10, '${rds_host}', ${rds_port});"
-    run_proxysql_admin "INSERT INTO mysql_users (username, password, default_hostgroup) VALUES ('${db_user}', '${db_pass}', 10);"
-    run_proxysql_admin "INSERT INTO mysql_query_rules (rule_id, active, username, destination_hostgroup, apply) VALUES (1, 1, '${db_user}', 10, 1);"
-    
-    run_proxysql_admin "UPDATE global_variables SET variable_value='${db_user}' WHERE variable_name='mysql-monitor_username';"
-    run_proxysql_admin "UPDATE global_variables SET variable_value='${db_pass}' WHERE variable_name='mysql-monitor_password';"
-    
-    run_proxysql_admin "LOAD MYSQL VARIABLES TO RUNTIME;"
-    run_proxysql_admin "LOAD MYSQL SERVERS TO RUNTIME;"
-    run_proxysql_admin "LOAD MYSQL USERS TO RUNTIME;"
-    run_proxysql_admin "LOAD MYSQL QUERY RULES TO RUNTIME;"
-    run_proxysql_admin "SAVE MYSQL VARIABLES TO DISK;"
-    run_proxysql_admin "SAVE MYSQL SERVERS TO DISK;"
-    run_proxysql_admin "SAVE MYSQL USERS TO DISK;"
-    run_proxysql_admin "SAVE MYSQL QUERY RULES TO DISK;"
-    
-    echo "INFO (ProxySQL): Configuração do ProxySQL concluída."
+    # 2. Preparar a senha para o SQL (Escapar aspas simples se existirem)
+    # Mesmo que sua senha atual não tenha ', a próxima pode ter.
+    local SAFE_DB_PASS=$(echo "$db_pass" | sed "s/'/\\\\'/g")
+
+    # 3. Executar comandos via Heredoc (Mais seguro que "mysql -e")
+    # Usar 'EOF' entre aspas impede que o shell tente expandir variáveis dentro do bloco SQL de forma errada
+    mysql -u admin -padmin -h 127.0.0.1 -P 6032 <<EOF
+DELETE FROM mysql_servers WHERE hostgroup_id = 10;
+DELETE FROM mysql_users WHERE username = '${db_user}';
+DELETE FROM mysql_query_rules WHERE rule_id = 1;
+
+INSERT INTO mysql_servers (hostgroup_id, hostname, port) VALUES (10, '${rds_host}', ${rds_port});
+INSERT INTO mysql_users (username, password, default_hostgroup) VALUES ('${db_user}', '${SAFE_DB_PASS}', 10);
+INSERT INTO mysql_query_rules (rule_id, active, username, destination_hostgroup, apply) VALUES (1, 1, '${db_user}', 10, 1);
+
+UPDATE global_variables SET variable_value='${db_user}' WHERE variable_name='mysql-monitor_username';
+UPDATE global_variables SET variable_value='${SAFE_DB_PASS}' WHERE variable_name='mysql-monitor_password';
+
+LOAD MYSQL VARIABLES TO RUNTIME;
+LOAD MYSQL SERVERS TO RUNTIME;
+LOAD MYSQL USERS TO RUNTIME;
+LOAD MYSQL QUERY RULES TO RUNTIME;
+
+SAVE MYSQL VARIABLES TO DISK;
+SAVE MYSQL SERVERS TO DISK;
+SAVE MYSQL USERS TO DISK;
+SAVE MYSQL QUERY RULES TO DISK;
+EOF
+
+    echo "INFO (ProxySQL): Configuração finalizada com sucesso."
 }
+
 
 setup_xray_instrumentation() {
     local wp_path="$1"
