@@ -1,5 +1,5 @@
 #!/bin/bash
-# EC2/Scripts/FetchAndRunS3Script.sh
+# EC2/Scripts/WordPress/FetchAndRunS3Script.sh
 
 # --- 1. Ajuste de Permissões ---
 echo "INFO: Ajustando permissões para /home/ec2-user/.env..."
