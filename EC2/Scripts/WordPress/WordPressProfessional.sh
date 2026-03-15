@@ -144,12 +144,13 @@ if (!empty(\$_SERVER['HTTP_X_FORWARDED_HOST'])) {
     \$site_host = \$_SERVER['HTTP_HOST'];
 }
 
-// Suporte para Load Balancers padroes (ALB) e AWS CloudFront
+// FIX CRÍTICO: Detectar HTTPS via proxies reversos e forçar a porta 443 para o WordPress não entrar em loop
 if (
     (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower(\$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') ||
     (isset(\$_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO']) && strtolower(\$_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO']) === 'https')
 ) {
     \$_SERVER['HTTPS'] = 'on';
+    \$_SERVER['SERVER_PORT'] = 443; 
 }
 
 define('WP_HOME', \$site_scheme . '://' . \$site_host);
@@ -159,6 +160,7 @@ define('FS_METHOD', 'direct');
 // --- Fim das Configurações Adicionadas ---
 EOPHP
 )
+
 
     TEMP_DEFINES_FILE_INNER=$(mktemp /tmp/defines.XXXXXX)
     echo -e "\n$PHP_DEFINES_BLOCK_CONTENT" >"$TEMP_DEFINES_FILE_INNER"
