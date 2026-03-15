@@ -144,16 +144,22 @@ if (!empty(\$_SERVER['HTTP_X_FORWARDED_HOST'])) {
     \$site_host = \$_SERVER['HTTP_HOST'];
 }
 
-if (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower(\$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {
+// Suporte para Load Balancers padroes (ALB) e AWS CloudFront
+if (
+    (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower(\$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') ||
+    (isset(\$_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO']) && strtolower(\$_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO']) === 'https')
+) {
     \$_SERVER['HTTPS'] = 'on';
 }
 
 define('WP_HOME', \$site_scheme . '://' . \$site_host);
 define('WP_SITEURL', \$site_scheme . '://' . \$site_host);
+define('FORCE_SSL_ADMIN', true);
 define('FS_METHOD', 'direct');
 // --- Fim das Configurações Adicionadas ---
 EOPHP
 )
+
     TEMP_DEFINES_FILE_INNER=$(mktemp /tmp/defines.XXXXXX)
     echo -e "\n$PHP_DEFINES_BLOCK_CONTENT" >"$TEMP_DEFINES_FILE_INNER"
     sed -i "/$MARKER_LINE_SED_PATTERN/r $TEMP_DEFINES_FILE_INNER" "$temp_config_file"
