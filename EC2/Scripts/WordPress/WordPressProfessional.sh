@@ -401,18 +401,30 @@ if ! rpm -q xray > /dev/null; then
   rm /tmp/xray.rpm
 fi
 
-echo "INFO: Configurando repositório YUM para o ProxySQL v2.6..."
-sudo tee /etc/yum.repos.d/proxysql.repo > /dev/null <<'EOF'
+PHP_TARGET_VERSION=${PHP_VERSION:-8.2}
+PROXYSQL_PACKAGE=""
+
+if [ "${ENABLE_PROXYSQL:-false}" = "true" ]; then
+    echo "INFO: Configurando repositório YUM para o ProxySQL v2.6..."
+    sudo tee /etc/yum.repos.d/proxysql.repo > /dev/null <<'EOF'
 [proxysql]
 name=ProxySQL YUM repository
 baseurl=https://repo.proxysql.com/ProxySQL/proxysql-2.6.x/centos/8/
 gpgcheck=1
 gpgkey=https://repo.proxysql.com/ProxySQL/proxysql-2.6.x/repo_pub_key
 EOF
-sudo yum clean all
+    sudo yum clean all
+    PROXYSQL_PACKAGE="proxysql"
+else
+    echo "INFO: ENABLE_PROXYSQL é falso ou não definido. Ignorando instalação do ProxySQL."
+fi
 
-echo "INFO: Instalando pacotes do PHP 8.2 e ProxySQL..."
-sudo dnf install -y httpd php8.2 php8.2-common php8.2-fpm php8.2-mysqlnd php8.2-mbstring php8.2-gd php8.2-xml php8.2-opcache proxysql
+echo "INFO: Instalando pacotes do PHP ${PHP_TARGET_VERSION} e dependências..."
+sudo dnf install -y httpd \
+    php${PHP_TARGET_VERSION} php${PHP_TARGET_VERSION}-common php${PHP_TARGET_VERSION}-fpm \
+    php${PHP_TARGET_VERSION}-mysqlnd php${PHP_TARGET_VERSION}-mbstring php${PHP_TARGET_VERSION}-gd \
+    php${PHP_TARGET_VERSION}-xml php${PHP_TARGET_VERSION}-opcache ${PROXYSQL_PACKAGE}
+
 if [ $? -ne 0 ]; then echo "ERRO CRÍTICO: Falha durante o 'yum install' dos pacotes restantes."; exit 1; fi
 
 echo "INFO: Verificando instalação do X-Ray Daemon..."
@@ -426,11 +438,20 @@ echo "INFO: Obtendo credenciais do RDS do Secrets Manager..."
 SECRET_STRING_VALUE=$(aws secretsmanager get-secret-value --secret-id "$AWS_DB_INSTANCE_SECRET_ARN_DB" --query 'SecretString' --output text --region "$REGION")
 DB_USER=$(echo "$SECRET_STRING_VALUE" | jq -r .username)
 DB_PASSWORD=$(echo "$SECRET_STRING_VALUE" | jq -r .password)
+
 DB_NAME_TO_USE="$AWS_DB_INSTANCE_DB_NAME_DB"
 RDS_ACTUAL_HOST_ENDPOINT=$(echo "$AWS_DB_INSTANCE_ENDPOINT_DB" | cut -d: -f1)
 RDS_ACTUAL_PORT=$(echo "$AWS_DB_INSTANCE_ENDPOINT_DB" | cut -d: -f2); [ -z "$RDS_ACTUAL_PORT" ] && RDS_ACTUAL_PORT=3306
-DB_HOST_FOR_WP_CONFIG="127.0.0.1:6033"
-setup_and_configure_proxysql "$RDS_ACTUAL_HOST_ENDPOINT" "$RDS_ACTUAL_PORT" "$DB_USER" "$DB_PASSWORD"
+
+if [ "${ENABLE_PROXYSQL:-false}" = "true" ]; then
+    echo "INFO: Configurando ProxySQL para mediar a conexão com o RDS..."
+    DB_HOST_FOR_WP_CONFIG="127.0.0.1:6033"
+    setup_and_configure_proxysql "$RDS_ACTUAL_HOST_ENDPOINT" "$RDS_ACTUAL_PORT" "$DB_USER" "$DB_PASSWORD"
+else
+    echo "INFO: Conectando o WordPress diretamente à instância RDS..."
+    DB_HOST_FOR_WP_CONFIG="${RDS_ACTUAL_HOST_ENDPOINT}:${RDS_ACTUAL_PORT}"
+fi
+
 
 if [ ! -d "$MOUNT_POINT/wp-includes" ]; then
     # --- INÍCIO DA LÓGICA DE VERSÃO DINÂMICA DO WORDPRESS ---
@@ -503,27 +524,39 @@ if ! sudo systemctl list-unit-files | grep -q -w "$PHP_FPM_SERVICE_NAME"; then
     exit 1
 fi
 
-echo "INFO: Habilitando serviços para iniciar no boot (httpd, php-fpm, proxysql, xray)..."
+echo "INFO: Habilitando serviços para iniciar no boot..."
 sudo systemctl enable httpd
 sudo systemctl enable "$PHP_FPM_SERVICE_NAME"
-sudo systemctl enable proxysql
 sudo systemctl enable xray
+[ "${ENABLE_PROXYSQL:-false}" = "true" ] && sudo systemctl enable proxysql
 
 echo "INFO: Reiniciando serviços na ordem correta para aplicar todas as mudanças..."
 sudo systemctl restart xray
-sudo systemctl restart proxysql
+[ "${ENABLE_PROXYSQL:-false}" = "true" ] && sudo systemctl restart proxysql
 sudo systemctl restart "$PHP_FPM_SERVICE_NAME"
 sudo systemctl restart httpd
 
 sleep 3
-if systemctl is-active --quiet httpd && systemctl is-active --quiet "$PHP_FPM_SERVICE_NAME" && systemctl is-active --quiet proxysql && systemctl is-active --quiet xray; then
+
+# Função auxiliar para verificar status condicionalmente
+check_services() {
+    systemctl is-active --quiet httpd || return 1
+    systemctl is-active --quiet "$PHP_FPM_SERVICE_NAME" || return 1
+    systemctl is-active --quiet xray || return 1
+    if [ "${ENABLE_PROXYSQL:-false}" = "true" ]; then
+        systemctl is-active --quiet proxysql || return 1
+    fi
+    return 0
+}
+
+if check_services; then
     echo "INFO: Todos os serviços essenciais estão ativos."
 else
     echo "ERRO CRÍTICO: Um ou mais serviços essenciais não estão ativos após o reinício final."
     sudo systemctl status httpd --no-pager
     sudo systemctl status "$PHP_FPM_SERVICE_NAME" --no-pager
-    sudo systemctl status proxysql --no-pager
     sudo systemctl status xray --no-pager
+    [ "${ENABLE_PROXYSQL:-false}" = "true" ] && sudo systemctl status proxysql --no-pager
     exit 1
 fi
 ### FIM DA SEÇÃO DE INICIALIZAÇÃO DE SERVIÇOS ###
