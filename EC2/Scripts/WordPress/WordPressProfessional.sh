@@ -206,10 +206,12 @@ setup_and_configure_proxysql() {
 DELETE FROM mysql_servers WHERE hostgroup_id = 10;
 DELETE FROM mysql_users WHERE username = '${db_user}';
 INSERT INTO mysql_servers (hostgroup_id, hostname, port) VALUES (10, '${rds_host}', ${rds_port});
-INSERT INTO mysql_users (username, password, default_hostgroup) VALUES ('${db_user}', '${SAFE_DB_PASS}', 10);
+
+INSERT INTO mysql_users (username, password, default_hostgroup) VALUES ('${db_user}', '${db_pass}', 10);
 INSERT INTO mysql_query_rules (rule_id, active, username, destination_hostgroup, apply) VALUES (1, 1, '${db_user}', 10, 1);
 UPDATE global_variables SET variable_value='${db_user}' WHERE variable_name='mysql-monitor_username';
-UPDATE global_variables SET variable_value='${SAFE_DB_PASS}' WHERE variable_name='mysql-monitor_password';
+UPDATE global_variables SET variable_value='${db_pass}' WHERE variable_name='mysql-monitor_password';
+
 LOAD MYSQL VARIABLES TO RUNTIME;
 LOAD MYSQL SERVERS TO RUNTIME;
 LOAD MYSQL USERS TO RUNTIME;
